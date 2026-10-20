@@ -125,7 +125,7 @@ chokidar
     }
   });
 
-// ---------- Main checker loop ----------
+// ---------- Main checker loop (PARALLEL) ----------
 async function runCheckerCycle() {
   const chains = [
     { name: "solana", fn: checkSolanaBatch },
@@ -135,26 +135,37 @@ async function runCheckerCycle() {
     { name: "bitcoin-segwit", fn: checkBitcoinBatch },
   ];
 
-  for (const chain of chains) {
-    console.log(`\n=== Checking ${chain.name} ===`);
+  console.log("\n=== Starting parallel chain workers ===");
 
-    while (true) {
-      const batch = getNextBatch(chain.name, 40);
+  // Run all chains at the same time
+  await Promise.all(
+    chains.map(async (chain) => {
+      console.log(`[${chain.name}] worker started`);
 
-      if (batch.length === 0) break;
+      while (true) {
+        const batch = getNextBatch(chain.name, 40);
 
-      console.log(`Processing ${batch.length} ${chain.name} addresses...`);
+        if (batch.length === 0) {
+          console.log(`[${chain.name}] no more addresses in this cycle`);
+          break;
+        }
 
-      try {
-        await chain.fn(batch);
-      } catch (err) {
-        console.error(`Error checking ${chain.name}:`, err);
-        await sleep(config.sleepAfterErrorMs);
+        console.log(`[${chain.name}] processing ${batch.length} addresses`);
+
+        try {
+          await chain.fn(batch); // already uses batching inside
+        } catch (err) {
+          console.error(`[${chain.name}] error:`, err);
+          await sleep(config.sleepAfterErrorMs);
+        }
+
+        // Respect rate limits between batches
+        await sleep(config.sleepBetweenBatchesMs);
       }
 
-      await sleep(config.sleepBetweenBatchesMs);
-    }
-  }
+      console.log(`[${chain.name}] worker finished this cycle`);
+    })
+  );
 }
 
 async function main() {

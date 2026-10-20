@@ -33,7 +33,7 @@ export async function checkSolanaBatch(rows: any[]) {
       for (let j = 0; j < accounts.length; j++) {
         const acc = accounts[j];
         const row = sliceRows[j];
-        const balance = acc ? acc.lamports / LAMPORTS_PER_SOL : 0;
+        const balance = acc ? Number(acc.lamports) / LAMPORTS_PER_SOL : 0;
 
         updateBalance(row.id, balance, balance > 0);
 
