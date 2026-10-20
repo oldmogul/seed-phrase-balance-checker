@@ -3,32 +3,33 @@ import { config } from "../config.js";
 import { respectRateLimit, sleep } from "../utils/rateLimiter.js";
 import { updateBalance } from "../db.js";
 import { sendTelegram } from "../notify.js";
+import { RpcRotator } from "../utils/rpcRotator.js";
 
-let rpcIndex = 0;
+const rotator = new RpcRotator(config.solanaRpcs);
 
 function getConnection() {
-  const url = config.solanaRpcs[rpcIndex % config.solanaRpcs.length];
-  rpcIndex++;
-  return new Connection(url, "confirmed");
+  const url = rotator.getNext();
+  const connection = new Connection(url, "confirmed");
+  return { connection, url };
 }
 
 export async function checkSolanaBatch(rows: any[]) {
   if (rows.length === 0) return;
 
-  const connection = getConnection();
-  const pubkeys = rows.map((r) => new PublicKey(r.address));
+  const batchSize = 40; // Solana getMultipleAccounts supports this well
 
-  try {
-    await respectRateLimit();
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const sliceRows = rows.slice(i, i + batchSize);
+    const pubkeys = sliceRows.map((r) => new PublicKey(r.address));
 
-    // Solana supports up to 100 accounts per getMultipleAccounts
-    const batchSize = 50;
-    for (let i = 0; i < pubkeys.length; i += batchSize) {
-      const slice = pubkeys.slice(i, i + batchSize);
-      const sliceRows = rows.slice(i, i + batchSize);
+    const { connection, url } = getConnection();
 
+    try {
       await respectRateLimit();
-      const accounts = await connection.getMultipleAccountsInfo(slice);
+
+      const accounts = await connection.getMultipleAccountsInfo(pubkeys);
+
+      rotator.reportSuccess(url);
 
       for (let j = 0; j < accounts.length; j++) {
         const acc = accounts[j];
@@ -43,11 +44,19 @@ export async function checkSolanaBatch(rows: any[]) {
           await sendTelegram(msg);
         }
       }
+    } catch (err: any) {
+      const message = err?.message || String(err);
 
-      await sleep(config.sleepBetweenBatchesMs);
+      if (message.includes("429") || message.includes("Too Many Requests")) {
+        rotator.report429(url);
+        console.log(`[solana] 429 on ${url} → switching endpoint`);
+      } else {
+        console.error("Solana batch error:", message);
+      }
+
+      await sleep(config.sleepAfterErrorMs);
     }
-  } catch (err: any) {
-    console.error("Solana batch error:", err.message || err);
-    await sleep(config.sleepAfterErrorMs);
+
+    await sleep(config.sleepBetweenBatchesMs);
   }
 }

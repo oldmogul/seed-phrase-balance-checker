@@ -3,28 +3,26 @@ import { config } from "../config.js";
 import { respectRateLimit, sleep } from "../utils/rateLimiter.js";
 import { updateBalance } from "../db.js";
 import { sendTelegram } from "../notify.js";
+import { RpcRotator } from "../utils/rpcRotator.js";
 
-let rpcIndex = 0;
+const rotator = new RpcRotator(config.ethereumRpcs);
 
 function getProvider() {
-  const url = config.ethereumRpcs[rpcIndex % config.ethereumRpcs.length];
-  rpcIndex++;
-
-  // staticNetwork: true → prevents endless "failed to detect network" retries
-  return new ethers.JsonRpcProvider(url, 1, {
+  const url = rotator.getNext();
+  const provider = new ethers.JsonRpcProvider(url, 1, {
     staticNetwork: true,
-    batchMaxCount: 1,
   });
+  return { provider, url };
 }
 
 export async function checkEthereumBatch(rows: any[]) {
   if (rows.length === 0) return;
 
-  const batchSize = 10; // keep small for free RPCs
+  const batchSize = 10; // keep small for free Ethereum RPCs
 
   for (let i = 0; i < rows.length; i += batchSize) {
     const slice = rows.slice(i, i + batchSize);
-    const provider = getProvider();
+    const { provider, url } = getProvider();
 
     try {
       await respectRateLimit();
@@ -32,7 +30,6 @@ export async function checkEthereumBatch(rows: any[]) {
       const results = await Promise.all(
         slice.map(async (row) => {
           try {
-            // Add a timeout so it can't hang forever
             const balanceWei = await Promise.race([
               provider.getBalance(row.address),
               sleep(8000).then(() => {
@@ -48,6 +45,8 @@ export async function checkEthereumBatch(rows: any[]) {
         })
       );
 
+      rotator.reportSuccess(url);
+
       for (const { row, balance } of results) {
         updateBalance(row.id, balance, balance > 0);
 
@@ -58,11 +57,18 @@ export async function checkEthereumBatch(rows: any[]) {
         }
       }
     } catch (err: any) {
-      console.error("Ethereum batch error:", err.message || err);
+      const message = err?.message || String(err);
+
+      if (message.includes("429") || message.includes("Too Many Requests")) {
+        rotator.report429(url);
+        console.log(`[ethereum] 429 on ${url} → switching endpoint`);
+      } else {
+        console.error("Ethereum batch error:", message);
+      }
+
       await sleep(config.sleepAfterErrorMs);
     }
 
-    // Always sleep between batches
     await sleep(config.sleepBetweenBatchesMs);
   }
 }

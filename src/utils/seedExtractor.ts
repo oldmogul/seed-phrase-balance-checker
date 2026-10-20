@@ -5,10 +5,10 @@ const BIP39_SET = new Set(wordlist);
 const VALID_LENGTHS = [12, 15, 18, 21, 24];
 
 /**
- * Extract possible seed phrases from any text
+ * Extract only valid BIP39 seed phrases (with correct checksum)
+ * and avoid overlapping matches.
  */
 export function extractSeedPhrases(text: string): string[] {
-  // Normalize text
   const cleaned = text
     .toLowerCase()
     .replace(/[^a-z\s]/g, " ")
@@ -16,26 +16,32 @@ export function extractSeedPhrases(text: string): string[] {
     .trim();
 
   const words = cleaned.split(" ").filter(Boolean);
-  const found = new Set<string>();
+  const found: string[] = [];
+  let i = 0;
 
-  for (const len of VALID_LENGTHS) {
-    for (let i = 0; i <= words.length - len; i++) {
+  while (i < words.length) {
+    let matched = false;
+
+    // Prefer longer phrases first
+    for (const len of [...VALID_LENGTHS].reverse()) {
+      if (i + len > words.length) continue;
+
       const candidate = words.slice(i, i + len);
+      if (!candidate.every((w) => BIP39_SET.has(w))) continue;
 
-      // All words must be in BIP39 wordlist
-      if (candidate.every((w) => BIP39_SET.has(w))) {
-        const phrase = candidate.join(" ");
+      const phrase = candidate.join(" ");
 
-        // Validate with wordlist (required in newer @scure/bip39)
-        if (validateMnemonic(phrase, wordlist)) {
-          found.add(phrase);
-        } else {
-          // Still keep possible candidates (some tools ignore checksum)
-          found.add(phrase);
-        }
+      // ONLY accept phrases with valid checksum
+      if (validateMnemonic(phrase, wordlist)) {
+        found.push(phrase);
+        i += len; // skip these words so we don't create overlaps
+        matched = true;
+        break;
       }
     }
+
+    if (!matched) i++;
   }
 
-  return Array.from(found);
+  return found;
 }
