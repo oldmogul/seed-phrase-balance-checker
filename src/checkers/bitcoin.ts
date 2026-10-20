@@ -2,9 +2,8 @@ import { config } from "../config.js";
 import { respectRateLimit, sleep } from "../utils/rateLimiter.js";
 import { updateBalance } from "../db.js";
 import { sendTelegram } from "../notify.js";
-
-// Using free public explorers / Electrum-style endpoints is fragile.
-// We use a simple blockstream.info style approach + fallback.
+import { log } from "../utils/logger.js";
+import { logBalanceFound } from "../utils/balanceLogger.js";
 
 async function getBtcBalance(address: string): Promise<number> {
   try {
@@ -23,22 +22,24 @@ async function getBtcBalance(address: string): Promise<number> {
 export async function checkBitcoinBatch(rows: any[]) {
   if (rows.length === 0) return;
 
-  try {
-    for (const row of rows) {
-      const balance = await getBtcBalance(row.address);
+  for (const row of rows) {
+    const balance = await getBtcBalance(row.address);
 
-      updateBalance(row.id, balance, balance > 0);
+    log(
+      `[SCAN] bitcoin          ${row.address} ${
+        balance > 0 ? `BALANCE=${balance.toFixed(8)}` : ""
+      }`
+    );
 
-      if (balance > 0) {
-        const msg = `🚨 <b>BITCOIN HIT</b>\nAddress: <code>${row.address}</code>\nBalance: <b>${balance.toFixed(8)} BTC</b>\nPath: ${row.path}`;
-        console.log(msg);
-        await sendTelegram(msg);
-      }
+    updateBalance(row.id, balance, balance > 0);
 
-      await sleep(config.sleepBetweenBatchesMs);
+    if (balance > 0) {
+      logBalanceFound("bitcoin", row.address, balance, row.path);
+      const msg = `🚨 <b>BITCOIN HIT</b>\nAddress: <code>${row.address}</code>\nBalance: <b>${balance.toFixed(8)} BTC</b>\nPath: ${row.path}`;
+      log(msg);
+      await sendTelegram(msg);
     }
-  } catch (err: any) {
-    console.error("Bitcoin batch error:", err.message || err);
-    await sleep(config.sleepAfterErrorMs);
+
+    await sleep(config.sleepBetweenBatchesMs);
   }
 }

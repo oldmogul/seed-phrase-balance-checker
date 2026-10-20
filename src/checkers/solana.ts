@@ -4,6 +4,8 @@ import { respectRateLimit, sleep } from "../utils/rateLimiter.js";
 import { updateBalance } from "../db.js";
 import { sendTelegram } from "../notify.js";
 import { RpcRotator } from "../utils/rpcRotator.js";
+import { log } from "../utils/logger.js";
+import { logBalanceFound } from "../utils/balanceLogger.js";
 
 const rotator = new RpcRotator(config.solanaRpcs);
 
@@ -16,19 +18,16 @@ function getConnection() {
 export async function checkSolanaBatch(rows: any[]) {
   if (rows.length === 0) return;
 
-  const batchSize = 40; // Solana getMultipleAccounts supports this well
+  const batchSize = 15;
 
   for (let i = 0; i < rows.length; i += batchSize) {
     const sliceRows = rows.slice(i, i + batchSize);
     const pubkeys = sliceRows.map((r) => new PublicKey(r.address));
-
     const { connection, url } = getConnection();
 
     try {
       await respectRateLimit();
-
       const accounts = await connection.getMultipleAccountsInfo(pubkeys);
-
       rotator.reportSuccess(url);
 
       for (let j = 0; j < accounts.length; j++) {
@@ -36,24 +35,29 @@ export async function checkSolanaBatch(rows: any[]) {
         const row = sliceRows[j];
         const balance = acc ? Number(acc.lamports) / LAMPORTS_PER_SOL : 0;
 
+        log(
+          `[SCAN] solana           ${row.address} ${
+            balance > 0 ? `BALANCE=${balance.toFixed(6)}` : ""
+          }`
+        );
+
         updateBalance(row.id, balance, balance > 0);
 
         if (balance > 0) {
+          logBalanceFound("solana", row.address, balance, row.path);
           const msg = `🚨 <b>SOLANA HIT</b>\nAddress: <code>${row.address}</code>\nBalance: <b>${balance.toFixed(6)} SOL</b>\nPath: ${row.path}`;
-          console.log(msg);
+          log(msg);
           await sendTelegram(msg);
         }
       }
     } catch (err: any) {
       const message = err?.message || String(err);
-
       if (message.includes("429") || message.includes("Too Many Requests")) {
         rotator.report429(url);
-        console.log(`[solana] 429 on ${url} → switching endpoint`);
+        log(`[429] solana switching away from ${url}`);
       } else {
-        console.error("Solana batch error:", message);
+        log(`Solana batch error: ${message}`);
       }
-
       await sleep(config.sleepAfterErrorMs);
     }
 
