@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import chokidar from "chokidar";
+import * as pdfParseModule from "pdf-parse";
 import { deriveFromMnemonic } from "./derive.js";
 import { getNextBatch } from "./db.js";
 import { checkSolanaBatch } from "./checkers/solana.js";
@@ -10,6 +11,10 @@ import { checkBitcoinBatch } from "./checkers/bitcoin.js";
 import { config } from "./config.js";
 import { sleep } from "./utils/rateLimiter.js";
 import { sendTelegram } from "./notify.js";
+import { extractSeedPhrases } from "./utils/seedExtractor.js";
+
+// Fix for pdf-parse TypeScript import issue
+const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 
 const INCOMING = path.join(process.cwd(), "incoming");
 const PROCESSED = path.join(process.cwd(), "processed");
@@ -18,42 +23,61 @@ if (!fs.existsSync(INCOMING)) fs.mkdirSync(INCOMING, { recursive: true });
 if (!fs.existsSync(PROCESSED)) fs.mkdirSync(PROCESSED, { recursive: true });
 
 console.log("Multi-chain balance checker started");
-console.log("Drop large seed JSON files into the /incoming folder");
+console.log("Drop JSON / PDF / TXT / CSV files into the /incoming folder");
 
-// ---------- Hot loading of huge JSON files ----------
+// ---------- Process any file and auto-detect seed phrases ----------
 async function processSeedFile(filePath: string) {
-  console.log(`Processing new seed file: ${filePath}`);
+  console.log(`\nProcessing file: ${filePath}`);
 
   try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    let seeds: string[] = [];
+    const ext = path.extname(filePath).toLowerCase();
+    let textContent = "";
 
-    const parsed = JSON.parse(raw);
+    // ===== Read file content based on type =====
+    if (ext === ".json") {
+      const raw = fs.readFileSync(filePath, "utf8");
+      try {
+        const parsed = JSON.parse(raw);
 
-    if (Array.isArray(parsed)) {
-      seeds = parsed;
-    } else if (parsed.seeds && Array.isArray(parsed.seeds)) {
-      seeds = parsed.seeds;
+        if (Array.isArray(parsed)) {
+          textContent = parsed.join("\n");
+        } else if (parsed.seeds && Array.isArray(parsed.seeds)) {
+          textContent = parsed.seeds.join("\n");
+        } else {
+          textContent = raw;
+        }
+      } catch {
+        textContent = raw;
+      }
+    } else if (ext === ".pdf") {
+      const dataBuffer = fs.readFileSync(filePath);
+      const pdfData = await pdfParse(dataBuffer);
+      textContent = pdfData?.text || "";
     } else {
-      console.error("Invalid JSON format. Expected array of strings or { seeds: [] }");
+      // .txt, .csv, .md, .log, or any other text file
+      textContent = fs.readFileSync(filePath, "utf8");
+    }
+
+    // ===== Extract seed phrases from the text =====
+    const seeds = extractSeedPhrases(textContent);
+
+    if (seeds.length === 0) {
+      console.log(`No valid seed phrases found in ${path.basename(filePath)}`);
+      const dest = path.join(PROCESSED, path.basename(filePath));
+      fs.renameSync(filePath, dest);
       return;
     }
 
-    console.log(`Found ${seeds.length} seeds. Deriving addresses...`);
+    console.log(`Found ${seeds.length} seed phrase(s). Deriving addresses...`);
 
     let processed = 0;
 
     for (const mnemonic of seeds) {
-      if (typeof mnemonic !== "string" || mnemonic.trim().split(/\s+/).length < 12) {
-        continue;
-      }
-
       try {
-        // IMPORTANT: await because deriveFromMnemonic is now async
-        await deriveFromMnemonic(mnemonic.trim());
+        await deriveFromMnemonic(mnemonic);
         processed++;
 
-        if (processed % 50 === 0) {
+        if (processed % 20 === 0 || processed === seeds.length) {
           console.log(`Derived ${processed}/${seeds.length}`);
         }
       } catch (err) {
@@ -61,19 +85,25 @@ async function processSeedFile(filePath: string) {
       }
     }
 
-    console.log(`Finished deriving ${processed} seeds from ${path.basename(filePath)}`);
+    console.log(
+      `Finished deriving ${processed} seeds from ${path.basename(filePath)}`
+    );
 
     // Move file to processed
     const dest = path.join(PROCESSED, path.basename(filePath));
     fs.renameSync(filePath, dest);
 
-    await sendTelegram(`✅ Imported ${processed} seeds from ${path.basename(filePath)}`);
+    await sendTelegram(
+      `✅ Processed <b>${path.basename(filePath)}</b>\nFound & derived: <b>${processed}</b> seed(s)`
+    );
   } catch (err: any) {
-    console.error("Failed to process seed file:", err.message || err);
+    console.error("Failed to process file:", err.message || err);
   }
 }
 
-// Watch for new files
+// ---------- Watch for new files ----------
+const allowedExtensions = [".json", ".pdf", ".txt", ".csv", ".md", ".log"];
+
 chokidar
   .watch(INCOMING, {
     persistent: true,
@@ -84,7 +114,9 @@ chokidar
     },
   })
   .on("add", async (filePath) => {
-    if (filePath.endsWith(".json")) {
+    const ext = path.extname(filePath).toLowerCase();
+
+    if (allowedExtensions.includes(ext)) {
       try {
         await processSeedFile(filePath);
       } catch (err) {

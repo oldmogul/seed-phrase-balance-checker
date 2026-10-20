@@ -33,12 +33,14 @@
     "dotenv": "^18.0.8",
     "ecpair": "^3.0.2",
     "ethers": "^6.17.0",
+    "pdf-parse": "^2.4.5",
     "tiny-secp256k1": "^2.2.4",
     "tronweb": "^6.5.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0"
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/pdf-parse": "^1.1.5"
   }
 }
