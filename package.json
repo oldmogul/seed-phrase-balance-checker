@@ -1,0 +1,44 @@
+{
+  "name": "seed-phrase-balance-checker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oldmogul/seed-phrase-balance-checker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/oldmogul/seed-phrase-balance-checker/issues"
+  },
+  "homepage": "https://github.com/oldmogul/seed-phrase-balance-checker#readme",
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@noble/secp256k1": "^3.2.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@solana/web3.js": "^3.1.1",
+    "@types/node": "^26.6.5",
+    "better-sqlite3": "^13.0.3",
+    "bitcoinjs-lib": "^7.0.4",
+    "bs58": "^6.0.0",
+    "chokidar": "^6.0.0",
+    "dotenv": "^18.0.8",
+    "ecpair": "^3.0.2",
+    "ethers": "^6.17.0",
+    "tiny-secp256k1": "^2.2.4",
+    "tronweb": "^6.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
+  }
+}
