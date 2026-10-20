@@ -1,4 +1,4 @@
-import TronWeb from "tronweb";
+import { TronWeb } from "tronweb";   // ← MUST be named import
 import { config } from "../config.js";
 import { respectRateLimit, sleep } from "../utils/rateLimiter.js";
 import { updateBalance } from "../db.js";

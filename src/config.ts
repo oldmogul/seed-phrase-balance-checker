@@ -18,9 +18,12 @@ export const config = {
     // add more free ones
   ],
   ethereumRpcs: [
-    "https://eth.llamarpc.com",
-    "https://rpc.ankr.com/eth",
-    "https://ethereum.publicnode.com",
+   "https://eth.llamarpc.com",
+  "https://rpc.ankr.com/eth",
+  "https://ethereum.publicnode.com",
+  "https://1rpc.io/eth",
+  "https://cloudflare-eth.com",
+  "https://eth-mainnet.public.blastapi.io",
   ],
   tronFullHosts: [
     "https://api.trongrid.io",

@@ -9,34 +9,44 @@ let rpcIndex = 0;
 function getProvider() {
   const url = config.ethereumRpcs[rpcIndex % config.ethereumRpcs.length];
   rpcIndex++;
-  return new ethers.JsonRpcProvider(url);
+
+  // staticNetwork: true → prevents endless "failed to detect network" retries
+  return new ethers.JsonRpcProvider(url, 1, {
+    staticNetwork: true,
+    batchMaxCount: 1,
+  });
 }
 
 export async function checkEthereumBatch(rows: any[]) {
   if (rows.length === 0) return;
 
-  const provider = getProvider();
+  const batchSize = 10; // keep small for free RPCs
 
-  try {
-    // Process in smaller batches because public RPCs are strict
-    const batchSize = 15;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const slice = rows.slice(i, i + batchSize);
+    const provider = getProvider();
 
-    for (let i = 0; i < rows.length; i += batchSize) {
-      const slice = rows.slice(i, i + batchSize);
-
+    try {
       await respectRateLimit();
 
-      const promises = slice.map(async (row) => {
-        try {
-          const balanceWei = await provider.getBalance(row.address);
-          const balance = Number(ethers.formatEther(balanceWei));
-          return { row, balance };
-        } catch {
-          return { row, balance: 0 };
-        }
-      });
+      const results = await Promise.all(
+        slice.map(async (row) => {
+          try {
+            // Add a timeout so it can't hang forever
+            const balanceWei = await Promise.race([
+              provider.getBalance(row.address),
+              sleep(8000).then(() => {
+                throw new Error("RPC timeout");
+              }),
+            ]);
 
-      const results = await Promise.all(promises);
+            const balance = Number(ethers.formatEther(balanceWei as bigint));
+            return { row, balance };
+          } catch {
+            return { row, balance: 0 };
+          }
+        })
+      );
 
       for (const { row, balance } of results) {
         updateBalance(row.id, balance, balance > 0);
@@ -47,11 +57,12 @@ export async function checkEthereumBatch(rows: any[]) {
           await sendTelegram(msg);
         }
       }
-
-      await sleep(config.sleepBetweenBatchesMs);
+    } catch (err: any) {
+      console.error("Ethereum batch error:", err.message || err);
+      await sleep(config.sleepAfterErrorMs);
     }
-  } catch (err: any) {
-    console.error("Ethereum batch error:", err.message || err);
-    await sleep(config.sleepAfterErrorMs);
+
+    // Always sleep between batches
+    await sleep(config.sleepBetweenBatchesMs);
   }
 }
